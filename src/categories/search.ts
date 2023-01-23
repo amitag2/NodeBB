@@ -1,17 +1,25 @@
-'use strict';
-
-import _ from 'lodash'; 
+import _ from 'lodash';
 
 import privileges from '../privileges';
-import  plugins from '../plugins';
+import plugins from '../plugins';
 import db from '../database';
 
-module.exports = function (Categories) {
-    Categories.search = async function (data) {
-        const query = data.query || '';
-        const page = data.page || 1;
-        const uid = data.uid || 0;
-        const paginate = data.hasOwnProperty('paginate') ? data.paginate : true;
+type data = {
+    type: string,
+    query: string,
+    page: number,
+    uid: number,
+    paginate: boolean,
+    hardCap: string,
+    resultsPerPage: number,
+    qs: string
+}
+export default function (Categories) {
+    Categories.search = async function (data: data) {
+        const query: string = data.query || '';
+        const page: number = data.page || 1;
+        const uid: number = data.uid || 0;
+        const paginate: boolean = data.hasOwnProperty('paginate') ? data.paginate : true;
 
         const startTime = process.hrtime();
 
@@ -26,6 +34,9 @@ module.exports = function (Categories) {
 
         const searchResult = {
             matchCount: cids.length,
+            pageCount: 0,
+            timing: '0',
+            categories: '',
         };
 
         if (paginate) {
@@ -57,7 +68,10 @@ module.exports = function (Categories) {
             }
             return c1.order - c2.order;
         });
-        searchResult.timing = (process.elapsedTimeSince(startTime) / 1000).toFixed(2);
+
+        // The next line calls a function in a module that has not been updated to TS yet
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+        //searchResult.timing = (process.elapsedTimeSince(startTime) / 1000).toFixed(2);
         searchResult.categories = categoryData.filter(c => cids.includes(c.cid));
         return searchResult;
     };
@@ -78,4 +92,4 @@ module.exports = function (Categories) {
         const childrenCids = await Promise.all(cids.map(cid => Categories.getChildrenCids(cid)));
         return await privileges.categories.filterCids('find', _.flatten(childrenCids), uid);
     }
-};
+}
