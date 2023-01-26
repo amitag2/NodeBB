@@ -3,6 +3,7 @@ import _ from 'lodash';
 import privileges from '../privileges';
 import plugins from '../plugins';
 import db from '../database';
+import { CategoryObject } from '../types';
 
 type data = {
     type: string,
@@ -10,11 +11,53 @@ type data = {
     page: number,
     uid: number,
     paginate: boolean,
-    hardCap: string,
+    hardCap: string, // i think hardcap is supposed to be int but how do i make [] of multiple types
     resultsPerPage: number,
     qs: string
 }
-export default function (Categories) {
+
+type child = {
+    type: string,
+    children: string[]
+}
+
+type result = {
+    cids: number[]
+}
+
+interface category extends CategoryObject{
+    getChildrenCids: (cid: number) => number[],
+    search: (data: data) => object,
+    getCategories: (cids: ConcatArray<number>, uid: number) => category[],
+    getTree: (categories: category[], parentCid:number) => category[],
+    getRecentTopicReplies: (categoryData:category[], uid:number, query:string) => [],
+    filterCids: (privilege:string, cids: number, uid:number)=> [],
+    cid: number,
+    children: child[],
+    subCategoriesPerPage: number,
+    parentCid: number,
+    order: number,
+}
+
+async function findCids(query:string, hardCap:string): Promise<number[]> {
+    if (!query || String(query).length < 2) {
+        return [];
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+    const data:(string)[] = await db.getSortedSetScan({
+        key: 'categories:name',
+        match: `*${String(query).toLowerCase()}*`,
+        limit: hardCap || 500,
+    }) as [];
+    return data.map(data => parseInt(data.split(':').pop(), 10));
+}
+
+export = function search(Categories: category) {
+    async function getChildrenCids(cids:number[], uid:number) : Promise<number[]> {
+        const childrenCids: number[][] = await Promise.all(cids.map(cid => Categories.getChildrenCids(cid)));
+        return await privileges.categories.filterCids('find', _.flatten(childrenCids), uid) as [];
+    }
+
     Categories.search = async function (data: data) {
         const query: string = data.query || '';
         const page: number = data.page || 1;
@@ -23,20 +66,22 @@ export default function (Categories) {
 
         const startTime = process.hrtime();
 
-        let cids = await findCids(query, data.hardCap);
+        let cids:number[] = await findCids(query, data.hardCap);
 
-        const result = await plugins.hooks.fire('filter:categories.search', {
+        const result: result = (await plugins.hooks.fire('filter:categories.search', {
             data: data,
             cids: cids,
             uid: uid,
-        });
-        cids = await privileges.categories.filterCids('find', result.cids, uid);
+        })) as result;
+
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+        cids = await privileges.categories.filterCids('find', result.cids, uid) as [];
 
         const searchResult = {
             matchCount: cids.length,
             pageCount: 0,
             timing: '0',
-            categories: '',
+            categories: [],
         };
 
         if (paginate) {
@@ -47,13 +92,13 @@ export default function (Categories) {
             cids = cids.slice(start, stop);
         }
 
-        const childrenCids = await getChildrenCids(cids, uid);
-        const uniqCids = _.uniq(cids.concat(childrenCids));
-        const categoryData = await Categories.getCategories(uniqCids, uid);
+        const childrenCids: number[] = await getChildrenCids(cids, uid);
+        const uniqCids: ConcatArray<number> = _.uniq(cids.concat(childrenCids));
+        const categoryData = Categories.getCategories(uniqCids, uid);
 
         Categories.getTree(categoryData, 0);
-        await Categories.getRecentTopicReplies(categoryData, uid, data.qs);
-        categoryData.forEach((category) => {
+        Categories.getRecentTopicReplies(categoryData, uid, data.qs);
+        categoryData.forEach((category: category) => {
             if (category && Array.isArray(category.children)) {
                 category.children = category.children.slice(0, category.subCategoriesPerPage);
                 category.children.forEach((child) => {
@@ -62,34 +107,15 @@ export default function (Categories) {
             }
         });
 
-        categoryData.sort((c1, c2) => {
+        categoryData.sort((c1: category, c2: category) => {
             if (c1.parentCid !== c2.parentCid) {
                 return c1.parentCid - c2.parentCid;
             }
             return c1.order - c2.order;
         });
 
-        // The next line calls a function in a module that has not been updated to TS yet
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-        //searchResult.timing = (process.elapsedTimeSince(startTime) / 1000).toFixed(2);
-        searchResult.categories = categoryData.filter(c => cids.includes(c.cid));
+        searchResult.timing = (((startTime[0] * 1e3) + (startTime[1] / 1e6)) / 1000).toFixed(2);
+        searchResult.categories = categoryData.filter(c => cids.includes((c.cid)));
         return searchResult;
     };
-
-    async function findCids(query, hardCap) {
-        if (!query || String(query).length < 2) {
-            return [];
-        }
-        const data = await db.getSortedSetScan({
-            key: 'categories:name',
-            match: `*${String(query).toLowerCase()}*`,
-            limit: hardCap || 500,
-        });
-        return data.map(data => parseInt(data.split(':').pop(), 10));
-    }
-
-    async function getChildrenCids(cids, uid) {
-        const childrenCids = await Promise.all(cids.map(cid => Categories.getChildrenCids(cid)));
-        return await privileges.categories.filterCids('find', _.flatten(childrenCids), uid);
-    }
 }
