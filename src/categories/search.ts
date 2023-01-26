@@ -32,11 +32,7 @@ interface category extends CategoryObject{
     getTree: (categories: category[], parentCid:number) => category[],
     getRecentTopicReplies: (categoryData:category[], uid:number, query:string) => [],
     filterCids: (privilege:string, cids: number, uid:number)=> [],
-    cid: number,
     children: child[],
-    subCategoriesPerPage: number,
-    parentCid: number,
-    order: number,
 }
 
 async function findCids(query:string, hardCap:string): Promise<number[]> {
